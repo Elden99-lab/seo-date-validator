@@ -59,18 +59,29 @@ app.post('/scrape', (req, res) => {
 
   if (urls.length === 0) return res.redirect('/');
 
-  // Step 1: Install Python packages and run scraper
-  const installCmd = 'pip install -r requirements.txt';
-  const pythonCmd = `python scraper.py ${urls.join(' ')}`;
-  const fullCmd = `${installCmd} && ${pythonCmd}`;
+  // Step 1: Create venv if it doesn’t exist
+  const setupVenv = `
+    if [ ! -d "venv" ]; then
+      python3 -m venv venv &&
+      source venv/bin/activate &&
+      pip install --upgrade pip &&
+      pip install -r requirements.txt;
+    fi
+  `;
 
-  exec(fullCmd, (err, stdout, stderr) => {
+  const runScript = `
+    source venv/bin/activate &&
+    venv/bin/python scraper.py ${urls.join(' ')}
+  `;
+
+  const fullCommand = `${setupVenv} && ${runScript}`;
+
+  exec(fullCommand, { shell: '/bin/bash' }, (err, stdout, stderr) => {
     if (err) {
       console.error('Python error:', stderr);
       return res.send(`<pre style="color:red;">${stderr}</pre>`);
     }
 
-    // Parse result and sort mismatches first
     const lines = stdout.trim().split('\n');
     const rows = lines.map(line => {
       const [status, updatedOn, dateModified, ...urlParts] = line.split(' | ');
@@ -81,17 +92,14 @@ app.post('/scrape', (req, res) => {
     const matches = rows.filter(r => r.status === '✅');
     const sorted = [...mismatches, ...matches];
 
-    // Create HTML table
     let html = `<table><tr><th>Status</th><th>Updated On</th><th>dateModified</th><th>URL</th></tr>`;
     sorted.forEach(r => {
       html += `<tr><td>${r.status}</td><td>${r.updatedOn}</td><td>${r.dateModified}</td><td><a href="${r.url}" target="_blank">${r.url}</a></td></tr>`;
     });
     html += `</table>`;
 
-    // Save HTML for display
     fs.writeFileSync('public/results.html', html, 'utf8');
 
-    // Save CSV
     const csv = 'Status,Updated On,dateModified,URL\n' +
       sorted.map(r => `${r.status},${r.updatedOn},${r.dateModified},"${r.url}"`).join('\n');
     const csvPath = path.join(__dirname, 'public', 'downloaded_csv', 'results.csv');
